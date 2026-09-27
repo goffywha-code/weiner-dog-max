@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Physics Bun & Wiener Dog Sandbox</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #0d1b1e;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow-y: auto;
+            padding-bottom: 20px;
+        }
+        h1 {
+            margin: 5px 0;
+            font-size: 22px;
+            color: #f4a460;
+            text-shadow: 2px 2px #000;
+        }
+        p.instructions {
+            margin: 0 0 8px 0;
+            font-size: 13px;
+            color: #a0c4ff;
+            text-align: center;
+        }
+        .ui-panel {
+            margin-bottom: 8px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        button {
+            background: #ff6b6b;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+            box-shadow: 0 4px #c92a2a;
+            transition: 0.1s;
+        }
+        button:active {
+            transform: translateY(4px);
+            box-shadow: 0 0 #c92a2a;
+        }
+        button.spawn { background: #51cf66; box-shadow: 0 4px #2b8a3e; }
+        button.spawn:active { box-shadow: 0 0 #2b8a3e; }
+        button.bun-btn { background: #f59f00; box-shadow: 0 4px #d97706; }
+        button.bun-btn:active { box-shadow: 0 0 #d97706; }
+        canvas {
+            background: linear-gradient(to bottom, #2b4c6f, #87ceeb 40%, #2e8b57 40%, #1e4d2b);
+            border: 4px solid #333344;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            cursor: pointer;
+        }
+        .music-link-box {
+            margin-top: 15px;
+            padding: 12px 20px;
+            background: #18282b;
+            border: 2px solid #ff6b6b;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .music-link-box a {
+            color: #ff8787;
+            font-weight: bold;
+            font-size: 16px;
+            text-decoration: none;
+        }
+        .music-link-box a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🌭 PRESS 'F' TO PUT THE WIENER IN THE BUN! 🌲</h1>
+    <p class="instructions">Drag dogs/buns/bottle • Hover mouse near a bun & press <b>[F]</b> to wrap it onto a dog with physics! • Right-click/Shift+Click to PIN nodes.</p>
+    
+    <div class="ui-panel">
+        <button class="spawn" onclick="spawnDog()">+ Spawn Wiener Dog</button>
+        <button onclick="deleteDog()">- Delete Dog</button>
+        <button class="bun-btn" onclick="spawnBun()">+ Add Bun</button>
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="420"></canvas>
+
+    <div class="music-link-box">
+        🎵 Jam out to the song while you play: 
+        <a href="https://www.youtube.com/watch?v=yqOn8CKXs_Y" target="_blank">Wiener Dog, Wiener Dog, How Did You Get So Long? (YouTube)</a>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const gravity = 0.35;
+        let grabbedNode = null; 
+        let grabbedBun = null;
+        let grabbedBottle = false;
+        let mouse = { x: 0, y: 0, prevX: 0, prevY: 0 };
+
+        const trees = [
+            { x: 100, y: 150, scale: 0.8 },
+            { x: 300, y: 130, scale: 1.1 },
+            { x: 550, y: 140, scale: 0.9 },
+            { x: 720, y: 120, scale: 1.2 }
+        ];
+
+        const platforms = [
+            { x: 120, y: 280, w: 180, h: 20 },
+            { x: 480, y: 220, w: 200, h: 20 },
+            { x: 300, y: 150, w: 130, h: 20 }
+        ];
+
+        let dogs = [];
+        let buns = [];
+        let ketchupSplats = [];
+
+        let bottle = {
+            x: 400,
+            y: 100,
+            oldX: 400,
+            oldY: 100,
+            w: 32,
+            h: 56,
+            angle: 0
+        };
+
+        class WienerDog {
+            constructor(x, y) {
+                this.nodes = [];
+                this.numNodes = 7;
+                this.nodeDist = 15;
+                for (let i = 0; i < this.numNodes; i++) {
+                    this.nodes.push({
+                        x: x - (i * 12),
+                        y: y,
+                        oldX: x - (i * 12),
+                        oldY: y,
+                        pinned: false
+                    });
+                }
+            }
+
+            update() {
+                for (let i = 0; i < this.nodes.length; i++) {
+                    let node = this.nodes[i];
+                    
+                    if (node.pinned) {
+                        node.oldX = node.x;
+                        node.oldY = node.y;
+                        continue;
+                    }
+
+                    if (grabbedNode && grabbedNode.dog === this && grabbedNode.index === i) {
+                        continue;
+                    }
+
+                    let vx = (node.x - node.oldX) * 0.98;
+                    let vy = (node.y - node.oldY) * 0.98 + gravity;
+
+                    node.oldX = node.x;
+                    node.oldY = node.y;
+
+                    node.x += vx;
+                    node.y += vy;
+
+                    if (node.y > canvas.height - 35) {
+                        node.y = canvas.height - 35;
+                        node.oldY = node.y + vy * 0.2;
+                    }
+                    if (node.x < 20) node.x = 20;
+                    if (node.x > canvas.width - 20) node.x = canvas.width - 20;
+
+                    platforms.forEach(p => {
+                        if (node.x > p.x && node.x < p.x + p.w &&
+                            node.y > p.y && node.y < p.y + p.h + 10) {
+                            node.y = p.y;
+                            node.oldY = node.y + vy * 0.1;
+                        }
+                    });
+
+                    // Active physical buns acting as platforms too
+                    buns.forEach(bun => {
+                        if (bun.attachedToDog) return; // handled by attachment physics
+                        if (node.x > bun.x - bun.w/2 && node.x < bun.x + bun.w/2 &&
+                            node.y > bun.y - bun.h/2 && node.y < bun.y + bun.h/2 + 10) {
+                            node.y = bun.y - bun.h/2;
+                            node.oldY = node.y + vy * 0.1;
+                        }
+                    });
+                }
+
+                for (let iter = 0; iter < 6; iter++) {
+                    for (let i = 0; i < this.nodes.length - 1; i++) {
+                        let n1 = this.nodes[i];
+                        let n2 = this.nodes[i+1];
+
+                        let dx = n2.x - n1.x;
+                        let dy = n2.y - n1.y;
+                        let dist = Math.sqrt(dx*dx + dy*dy);
+                        if (dist === 0) dist = 0.001;
+
+                        let diff = (dist - this.nodeDist) / dist;
+
+                        let isN1Grabbed = (grabbedNode && grabbedNode.dog === this && grabbedNode.index === i);
+                        let isN2Grabbed = (grabbedNode && grabbedNode.dog === this && grabbedNode.index === i+1);
+
+                        if (!n1.pinned && !isN1Grabbed) {
+                            n1.x += dx * 0.5 * diff;
+                            n1.y += dy * 0.5 * diff;
+                        }
+                        if (!n2.pinned && !isN2Grabbed) {
+                            n2.x -= dx * 0.5 * diff;
+                            n2.y -= dy * 0.5 * diff;
+                        }
+                    }
+                }
+            }
+
+            draw() {
+                for (let i = 0; i < this.nodes.length - 1; i++) {
+                    let n1 = this.nodes[i];
+                    let n2 = this.nodes[i+1];
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(n1.x, n1.y);
+                    ctx.lineTo(n2.x, n2.y);
+                    ctx.strokeStyle = '#f4a460';
+                    ctx.lineWidth = 26;
+                    ctx.lineCap = 'round';
+                    ctx.stroke();
+
+                    ctx.strokeStyle = '#b47333';
+                    ctx.lineWidth = 18;
+                    ctx.stroke();
+
+                    ctx.strokeStyle = '#ffcc00';
+                    ctx.lineWidth = 5;
+                    ctx.stroke();
+                }
+
+                for (let i = 0; i < this.nodes.length; i++) {
+                    let n = this.nodes[i];
+                    if (n.pinned) {
+                        ctx.fillStyle = '#ff3333';
+                        ctx.beginPath();
+                        ctx.arc(n.x, n.y, 7, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    }
+                }
+
+                let backLeg = this.nodes[this.nodes.length - 2];
+                let frontLeg = this.nodes[1];
+                ctx.strokeStyle = '#b47333';
+                ctx.lineWidth = 6;
+                ctx.lineCap = 'round';
+                ctx.beginPath(); ctx.moveTo(backLeg.x, backLeg.y); ctx.lineTo(backLeg.x - 5, backLeg.y + 16); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(frontLeg.x, frontLeg.y); ctx.lineTo(frontLeg.x + 5, frontLeg.y + 16); ctx.stroke();
+
+                let head = this.nodes[0];
+                ctx.fillStyle = '#b47333';
+                ctx.beginPath();
+                ctx.arc(head.x, head.y, 15, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#8b4513';
+                ctx.beginPath();
+                ctx.ellipse(head.x - 4, head.y + 4, 6, 12, Math.PI / 6, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#b47333';
+                ctx.beginPath();
+                ctx.ellipse(head.x + 10, head.y + 3, 10, 6, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(head.x + 18, head.y + 2, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(head.x + 4, head.y - 4, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(head.x + 5, head.y - 4, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        class HotdogBun {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.oldX = x;
+                this.oldY = y;
+                this.w = 95;
+                this.h = 45;
+                this.attachedToDog = null; // Reference to WienerDog when wrapped
+            }
+
+            update() {
+                if (grabbedBun === this) return;
+
+                if (this.attachedToDog) {
+                    // Follow the middle body node of the dog it's hugging
+                    let targetNode = this.attachedToDog.nodes[Math.floor(this.attachedToDog.nodes.length / 2)];
+                    this.x = targetNode.x;
+                    this.y = targetNode.y;
+                    this.oldX = this.x;
+                    this.oldY = this.y;
+                } else {
+                    // Normal Physics falling
+                    let vx = (this.x - this.oldX) * 0.98;
+                    let vy = (this.y - this.oldY) * 0.98 + gravity;
+
+                    this.oldX = this.x;
+                    this.oldY = this.y;
+                    this.x += vx;
+                    this.y += vy;
+
+                    if (this.y > canvas.height - 30) {
+                        this.y = canvas.height - 30;
+                        this.oldY = this.y + vy * 0.2;
+                        this.x -= vx * 0.3;
+                    }
+                    if (this.x < 30) this.x = 30;
+                    if (this.x > canvas.width - 30) this.x = canvas.width - 30;
+
+                    platforms.forEach(p => {
+                        if (this.x > p.x && this.x < p.x + p.w &&
+                            this.y > p.y - 20 && this.y < p.y + p.h) {
+                            this.y = p.y - 20;
+                            this.oldY = this.y + vy * 0.1;
+                        }
+                    });
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                // If attached, slightly tilt with dog if desired or stay upright
+                ctx.fillStyle = '#f4a460';
+                ctx.beginPath();
+                ctx.roundRect(-this.w/2, -this.h/2, this.w, this.h, [18, 18, 25, 25]);
+                ctx.fill();
+                ctx.strokeStyle = '#c68b59';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                ctx.fillStyle = '#d9822b';
+                ctx.beginPath();
+                ctx.ellipse(0, 0, this.w * 0.35, this.h * 0.3, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        function spawnDog() {
+            dogs.push(new WienerDog(180 + Math.random() * 80, 100));
+        }
+
+        function deleteDog() {
+            if (dogs.length > 0) dogs.pop();
+        }
+
+        function spawnBun() {
+            buns.push(new HotdogBun(400 + (Math.random() - 0.5) * 200, 150));
+        }
+
+        spawnDog();
+        spawnBun();
+
+        // Press 'F' key to put the wiener in the bun!
+        window.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 'f') {
+                // Find closest bun to mouse
+                let closestBun = null;
+                let minDist = 60;
+                buns.forEach(bun => {
+                    let d = Math.hypot(bun.x - mouse.x, bun.y - mouse.y);
+                    if (d < minDist) {
+                        minDist = d;
+                        closestBun = bun;
+                    }
+                });
+
+                if (closestBun) {
+                    // Toggle attachment or find nearest dog
+                    if (closestBun.attachedToDog) {
+                        closestBun.attachedToDog = null; // Un-wrap
+                    } else {
+                        let closestDog = null;
+                        let minDogDist = 120;
+                        dogs.forEach(dog => {
+                            dog.nodes.forEach(node => {
+                                let d = Math.hypot(node.x - closestBun.x, node.y - closestBun.y);
+                                if (d < minDogDist) {
+                                    minDogDist = d;
+                                    closestDog = dog;
+                                }
+                            });
+                        });
+                        if (closestDog) {
+                            closestBun.attachedToDog = closestDog;
+                        }
+                    }
+                }
+            }
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+
+            if (Math.hypot(bottle.x - mx, bottle.y - my) < 30) {
+                grabbedBottle = true;
+                return;
+            }
+
+            for (let bun of buns) {
+                if (Math.abs(bun.x - mx) < bun.w/2 && Math.abs(bun.y - my) < bun.h/2) {
+                    grabbedBun = bun;
+                    bun.attachedToDog = null; // Detach if dragged manually
+                    return;
+                }
+            }
+
+            for (let dog of dogs) {
+                for (let i = 0; i < dog.nodes.length; i++) {
+                    let node = dog.nodes[i];
+                    if (Math.hypot(node.x - mx, node.y - my) < 20) {
+                        if (e.button === 2 || e.shiftKey) {
+                            node.pinned = !node.pinned;
+                            node.oldX = node.x;
+                            node.oldY = node.y;
+                        } else {
+                            grabbedNode = { dog: dog, index: i };
+                            node.pinned = false;
+                        }
+                        return;
+                    }
+                }
+            }
+        });
+
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        window.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.prevX = mouse.x;
+            mouse.prevY = mouse.y;
+            mouse.x = e.clientX - rect.left;
+            mouse.y = e.clientY - rect.top;
+        });
+
+        window.addEventListener('mouseup', () => {
+            grabbedNode = null;
+            grabbedBun = null;
+            grabbedBottle = false;
+        });
+
+        function update() {
+            if (grabbedNode) {
+                let node = grabbedNode.dog.nodes[grabbedNode.index];
+                node.x = mouse.x;
+                node.y = mouse.y;
+                node.oldX = mouse.x;
+                node.oldY = mouse.y;
+            }
+
+            if (grabbedBun) {
+                grabbedBun.x = mouse.x;
+                grabbedBun.y = mouse.y;
+                grabbedBun.oldX = mouse.x - (mouse.x - mouse.prevX);
+                grabbedBun.oldY = mouse.y - (mouse.y - mouse.prevY);
+            }
+
+            if (grabbedBottle) {
+                bottle.x = mouse.x;
+                bottle.y = mouse.y;
+                bottle.oldX = mouse.x - (mouse.x - mouse.prevX);
+                bottle.oldY = mouse.y - (mouse.y - mouse.prevY);
+                bottle.angle = (mouse.x - mouse.prevX) * 0.05;
+            } else {
+                let vx = (bottle.x - bottle.oldX) * 0.98;
+                let vy = (bottle.y - bottle.oldY) * 0.98 + gravity;
+
+                bottle.oldX = bottle.x;
+                bottle.oldY = bottle.y;
+                bottle.x += vx;
+                bottle.y += vy;
+
+                if (bottle.y > canvas.height - 40) {
+                    bottle.y = canvas.height - 40;
+                    bottle.oldY = bottle.y + vy * 0.2;
+                    bottle.x -= vx * 0.3;
+                }
+                if (bottle.x < 25) bottle.x = 25;
+                if (bottle.x > canvas.width - 25) bottle.x = canvas.width - 25;
+
+                platforms.forEach(p => {
+                    if (bottle.x > p.x && bottle.x < p.x + p.w &&
+                        bottle.y > p.y - 15 && bottle.y < p.y + p.h) {
+                        bottle.y = p.y - 15;
+                        bottle.oldY = bottle.y + vy * 0.1;
+                    }
+                });
+
+                bottle.angle *= 0.9;
+            }
+
+            // Pour Ketchup
+            let tiltMagnitude = Math.abs(bottle.angle) + Math.abs(bottle.y - bottle.oldY);
+            if (tiltMagnitude > 4 || grabbedBottle && Math.abs(mouse.y - mouse.prevY) > 12) {
+                let tipX = bottle.x - Math.sin(bottle.angle) * 30;
+                let tipY = bottle.y - Math.cos(bottle.angle) * 30;
+                ketchupSplats.push({
+                    x: tipX + (Math.random() - 0.5) * 6,
+                    y: tipY,
+                    vy: 2 + Math.random() * 2,
+                    vx: (Math.random() - 0.5) * 3
+                });
+            }
+
+            buns.forEach(bun => bun.update());
+            dogs.forEach(dog => dog.update());
+
+            for (let i = ketchupSplats.length - 1; i >= 0; i--) {
+                let k = ketchupSplats[i];
+                k.x += k.vx;
+                k.y += k.vy;
+                k.vy += 0.2;
+
+                if (k.y > canvas.height - 35) {
+                    k.y = canvas.height - 35;
+                    k.vy = 0;
+                    k.vx = 0;
+                }
+
+                dogs.forEach(dog => {
+                    dog.nodes.forEach(node => {
+                        if (Math.hypot(node.x - k.x, node.y - k.y) < 18) {
+                            k.stuckToNode = node;
+                        }
+                    });
+                });
+
+                if (k.stuckToNode) {
+                    k.x = k.stuckToNode.x + (Math.random() - 0.5) * 10;
+                    k.y = k.stuckToNode.y + (Math.random() - 0.5) * 10;
+                    k.vy = 0;
+                    k.vx = 0;
+                }
+
+                if (ketchupSplats.length > 200) {
+                    ketchupSplats.shift();
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            trees.forEach(t => {
+                ctx.save();
+                ctx.translate(t.x, t.y);
+                ctx.scale(t.scale, t.scale);
+                ctx.fillStyle = '#5c4033';
+                ctx.fillRect(-10, 0, 20, 100);
+                ctx.fillStyle = '#1b4d3e';
+                ctx.beginPath();
+                ctx.moveTo(0, -60); ctx.lineTo(50, 20); ctx.lineTo(-50, 20); ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(0, -30); ctx.lineTo(40, 50); ctx.lineTo(-40, 50); ctx.fill();
+                ctx.restore();
+            });
+
+            ctx.fillStyle = '#5c4033';
+            platforms.forEach(p => {
+                ctx.fillRect(p.x, p.y, p.w, p.h);
+                ctx.strokeStyle = '#3d2817';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(p.x, p.y, p.w, p.h);
+            });
+
+            // Draw Buns
+            buns.forEach(bun => bun.draw());
+
+            // Draw Dogs
+            dogs.forEach(dog => dog.draw());
+
+            // Ketchup Splats
+            ketchupSplats.forEach(k => {
+                ctx.fillStyle = '#c92a2a';
+                ctx.beginPath();
+                ctx.arc(k.x, k.y, 5, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Draw Ketchup Bottle
+            ctx.save();
+            ctx.translate(bottle.x, bottle.y);
+            ctx.rotate(bottle.angle);
+            ctx.fillStyle = '#d92b2b';
+            ctx.beginPath();
+            ctx.roundRect(-16, -28, 32, 50, [6, 6, 12, 12]);
+            ctx.fill();
+            ctx.strokeStyle = '#821a1a';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(-11, -12, 22, 26);
+            ctx.fillStyle = '#e03131';
+            ctx.font = 'bold 7px sans-serif';
+            ctx.fillText("HEINZ", -9, -1);
+            ctx.fillText("KETCHUP", -11, 9);
+
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(-4, -36, 8, 10);
+            ctx.restore();
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        loop();
+    </script>
+</body>
+</html>
